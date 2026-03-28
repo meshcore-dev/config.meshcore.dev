@@ -1,0 +1,189 @@
+[v-cloak] {
+  display: none !important;
+}
+
+.overlay {
+  position: fixed;
+  z-index: 2000;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1em;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  color: white;
+}
+
+main {
+  overflow-x: visible !important;
+}
+
+body:has(dialog[open])::after {
+  content: '';
+  position: absolute;
+  z-index: 1049;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  backdrop-filter: blur(10px);
+}
+
+dialog {
+  z-index: 1050;
+  padding: 15px;
+  max-height: 80vh;
+  width: 750px;
+}
+
+.tooltip {
+  position: absolute;
+  z-index: 1010;
+}
+
+.tooltip a {
+  text-decoration: underline !important;
+}
+
+.actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+.dual-pane {
+  display: flex;
+  flex-direction: column;
+  flex-wrap: wrap;
+  /* max-height: 100vh; */
+  gap: 10px;
+}
+
+#map {
+  width: 100%;
+  min-width: 400px;
+  height: 400px;
+
+}
+
+.dual-pane fieldset {
+  margin-block-start: 0;
+}
+
+.field {
+  margin-block-end: 0.5rem;
+}
+
+.byte-counter {
+  font-size: 0.85em;
+}
+
+.console-output {
+  background: #0d0d0d !important;
+  color: #ccc !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  padding: 0.75em !important;
+  border-radius: 0.25rem !important;
+  height: 400px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.console-output * {
+  font-family: 'Courier New', Courier, monospace !important;
+  font-size: 13px !important;
+}
+
+.console-cmd {
+  color: #7cb3ff !important;
+}
+
+.console-reply {
+  color: #ccc !important;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.console-error {
+  color: #ff6b6b !important;
+}
+
+.console-input-line {
+  display: flex !important;
+  align-items: center !important;
+  margin-top: 0.25em !important;
+  width: 100%;
+  cursor: text;
+}
+
+.console-prompt {
+  color: #7cb3ff !important;
+  flex-shrink: 0;
+}
+
+.console-input-line input {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  color: #7cb3ff !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  font-size: 13px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+.console-ghost {
+  color: #555 !important;
+  font-family: 'Courier New', Courier, monospace !important;
+  font-size: 13px !important;
+  pointer-events: none;
+  white-space: pre;
+}
+
+.console-input-line progress {
+  flex-shrink: 0;
+  margin-left: 0.5em;
+}
+
+@media (max-width: 800px) {
+  .dual-pane {
+    max-height: none;
+  }
+  .dual-pane > * {
+    width: 100%;
+  }
+  dialog {
+    width: 95%;
+    max-height: 100vh;
+  }
+}
+
+.leaflet-map-pane {
+  cursor: crosshair
+}
+
+.leaflet-bottom {
+  position: absolute !important;
+}
+.leaflet-control-layers-list {
+  margin-block-start: 0 !important;
+}
+.leaflet-bottom .leaflet-control-layers {
+  margin-bottom: 55px !important;
+}

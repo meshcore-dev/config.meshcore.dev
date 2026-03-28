@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MeshCore Repeater / Room server USB setup</title>
+  <link href="./lib/css/beer.css" rel="stylesheet">
+  <link href="./css/style.css" rel="stylesheet">
+  <link rel="stylesheet" href="./lib/css/leaflet.css" />
+  <script src="./lib/leaflet.js"></script>
+</head>
+
+<body class="dark">
+  <div id="app" v-cloak>
+    <div v-if="app.busy" class="overlay">
+      <progress class="circle large"></progress>
+      <span>{{ app.busy }}</span>
+    </div>
+    <div class="snackbar" :class="snackbar.class" popover>
+      <i v-if="snackbar.icon">{{ snackbar.icon }}</i>
+      <span v-html="snackbar.text"></span>
+    </div>
+    <header>
+      <nav>
+        <h5 class="small">Repeater / Room server USB setup</h5>
+        <span class="max"></span>
+        <button v-if="app.connected" @click="disconnect">
+          <i>usb_off</i><span>Disconnect</span>
+        </button>
+        <button v-else-if="app.connecting" disabled>
+          <progress class="circle small"></progress>
+          <span>Connecting...</span>
+        </button>
+        <button v-else @click="connect">
+          <i>usb</i><span>Connect</span>
+        </button>
+      </nav>
+    </header>
+
+    <dialog ref="vanityDialog">
+      <header>
+        <nav>
+          <h6>Generate vanity public key</h6>
+          <span class="max"></span>
+          <button class="transparent circle" @click="closeVanityDialog"><i>close</i></button>
+        </nav>
+      </header>
+
+      <!-- Input phase -->
+      <div v-if="vanity.phase === 'input'">
+        <p>Enter a hex prefix (1-6 characters) for your public key. Uses {{ vanity.cores }} CPU cores.</p>
+        <div class="field border label">
+          <input placeholder=" " v-model="vanity.prefix" maxlength="6" pattern="[0-9a-fA-F]*"
+            @input="vanity.prefix = vanity.prefix.replace(/[^0-9a-fA-F]/g, '')">
+          <label>Hex prefix (0-9, a-f)</label>
+        </div>
+        <div v-if="vanity.prefix.length >= 2 && (vanity.prefix.toUpperCase().startsWith('00') || vanity.prefix.toUpperCase().startsWith('FF'))"
+          class="row" style="align-items: center; gap: 0.5em; color: var(--error); margin: 0.5em 0">
+          <i>warning</i>
+          <span>Prefixes starting with "00" or "FF" are reserved by MeshCore.</span>
+        </div>
+        <table class="border" v-if="vanity.prefix.length > 0">
+          <tr><td>Prefix</td><td><code>{{ vanity.prefix.toLowerCase() }}...</code></td></tr>
+          <tr><td>Expected attempts</td><td>{{ (Math.pow(16, vanity.prefix.length)).toLocaleString() }}</td></tr>
+          <tr><td>Estimated time</td><td>{{ vanity.estimatedTime }}</td></tr>
+        </table>
+        <nav class="right-align">
+          <button class="transparent link" @click="closeVanityDialog">Cancel</button>
+          <button @click="startVanityGen" :disabled="!vanity.prefix || (vanity.prefix.length >= 2 && (vanity.prefix.toUpperCase().startsWith('00') || vanity.prefix.toUpperCase().startsWith('FF')))">
+            <i>play_arrow</i>
+            <span>Generate</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Generating phase -->
+      <div v-if="vanity.phase === 'generating'">
+        <p>Searching for public key starting with <code>{{ vanity.prefix.toLowerCase() }}...</code></p>
+        <progress :value="vanity.progress" max="100"></progress>
+        <div class="small-space"></div>
+        <table class="border">
+          <tr><td>Attempts</td><td>{{ vanity.attempts.toLocaleString() }}</td></tr>
+          <tr><td>Elapsed</td><td>{{ vanity.elapsed }}</td></tr>
+          <tr><td>Speed</td><td>{{ vanity.keysPerSec }} keys/sec</td></tr>
+        </table>
+        <nav class="right-align">
+          <button @click="cancelVanityGen">
+            <i>stop</i>
+            <span>Cancel</span>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Result phase -->
+      <div v-if="vanity.phase === 'result'">
+        <div class="row" style="align-items: center; gap: 0.5em; color: var(--primary); margin-bottom: 0.5em">
+          <i>check_circle</i>
+          <span>Found a match in {{ vanity.attempts.toLocaleString() }} attempts ({{ vanity.elapsed }})</span>
+        </div>
+        <div class="field border label">
+          <input :value="vanity.resultPubKey" readonly>
+          <label>Public Key</label>
+        </div>
+        <div class="field border label">
+          <input type="password" :value="vanity.resultPrvKey" readonly>
+          <label>Private Key (64 bytes, hidden)</label>
+        </div>
+        <div class="row" style="align-items: center; gap: 0.5em; color: var(--error); margin: 0.5em 0">
+          <i>warning</i>
+          <span>Applying this key changes the device identity. A reboot is required.</span>
+        </div>
+        <nav class="right-align">
+          <button class="transparent link" @click="closeVanityDialog">Cancel</button>
+          <button @click="applyVanityKey">
+            <i>check</i>
+            <span>Use this key</span>
+          </button>
+        </nav>
+      </div>
+    </dialog>
+
+    <dialog ref="consoleDialog">
+      <header>
+        <nav>
+          <h6>Console</h6>
+          <span class="max"></span>
+          <button class="transparent circle" @click="consoleDialog.close()"><i>close</i></button>
+        </nav>
+      </header>
+      <div class="console-output" ref="consoleOutput" @click="consoleFocus" @mouseup="consoleCopy">
+        <div v-for="entry in consoleLog" :class="'console-' + entry.type">{{ entry.text }}</div>
+        <form @submit.prevent="sendConsoleCmd" class="console-input-line">
+          <span class="console-prompt">&gt;&nbsp;</span>
+          <input v-model="consoleCmd" ref="consoleCmdInput" spellcheck="false" autocomplete="off"
+            :style="{ width: (consoleCmd.length || 1) + 'ch' }"
+            @keydown.up.prevent="consoleHistoryUp" @keydown.down.prevent="consoleHistoryDown"
+            @keydown.tab.prevent="consoleTab">
+          <span class="console-ghost" v-if="consoleSuggestion">{{ consoleSuggestion }}</span>
+          <progress v-if="consoleBusy" class="circle small"></progress>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog ref="mapDialog" class="no-round">
+      <header>
+        <nav>
+          <h6>Choose location from map</h6>
+          <span class="max"></span>
+          <button class="transparent circle" @click="mapDialog.close()"><i>close</i></button>
+        </nav>
+      </header>
+      <div class="small-space"></div>
+      <button @click="requestLocation">
+        <i>my_location</i>
+        <span>Request location</span>
+      </button>
+      <div class="small-space"></div>
+      <div id="map" class="no-round"></div>
+      <nav class="right-align">
+        <button class="transparent link" @click="mapDialog.close()">Cancel</button>
+        <button class="transparent link" @click="setMapLatLon">Set location</button>
+      </nav>
+    </dialog>
+
+    <main class="responsive padding" v-if="app.connected">
+      <div class="dual-pane">
+        <fieldset :disabled="app.locked">
+          <legend>Info & Actions</legend>
+          <div class="actions">
+            <button @click="openConsole">
+              <i>terminal</i>
+              <span>Console</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Send manual CLI commands to the device
+              </div>
+            </button>
+            <button @click="importConfig">
+              <i>upload</i>
+              <span>Import</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Import configuration from a JSON file
+              </div>
+            </button>
+            <button @click="exportConfig">
+              <i>download</i>
+              <span>Export</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Export current configuration to a JSON file
+              </div>
+            </button>
+          </div>
+          <div class="small-space"></div>
+          <div class="row">
+            <div class="field label max">
+              <input placeholder=" " v-model="app.device.version" readonly>
+              <label>Version</label>
+            </div>
+            <div class="field label max">
+              <input placeholder=" " v-model="app.device.clock" readonly>
+              <label>Clock</label>
+            </div>
+          </div>
+          <div class="small-space"></div>
+          <div class="row">
+            <div class="field label max" v-if="app.device.pubKey">
+              <input placeholder=" " v-model="app.device.pubKey" readonly>
+              <label>Public Key</label>
+            </div>
+            <button class="circle" @click="openVanityDialog" v-if="app.device.pubKey">
+              <i>edit</i>
+              <div class="tooltip right max bottom" @click.stop>
+                Generate a new identity with a custom public key prefix
+              </div>
+            </button>
+            <div class="field label max" v-if="app.device.role">
+              <input placeholder=" " v-model="app.device.role" readonly>
+              <label>Role</label>
+            </div>
+          </div>
+          <div class="small-space"></div>
+          <div class="row" v-if="app.device.prvKey">
+            <div class="field label max">
+              <input placeholder=" " type="password" :value="app.device.prvKey" readonly>
+              <label>Private Key</label>
+            </div>
+            <button class="circle" @click="copyPrvKey">
+              <i>content_copy</i>
+            </button>
+          </div>
+          <div class="small-space"></div>
+          <div class="actions">
+            <button @click="sendAdvert">
+              <i>cell_tower</i>
+              <span>Send Advert</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Sends an advertisement packet
+              </div>
+            </button>
+            <button @click="startOTA">
+              <i>upgrade</i>
+              <span>Start OTA</span>
+              <div class="tooltip right max bottom" @click.stop>
+                <p>Start Over the air firmware upgrade. In case of ESP32 device, new WiFi AP will be created that you can use to upload firmware binary. In case of nRF52 device, use <b>nRF Connect</b> app to update the firwmare.</p>
+                <p>Please visit <b><a target="_blank" href="https://github.com/ripplebiz/MeshCore/blob/main/docs/faq.md#q-how-to--update-repeater-and-room-server-firmware-over-the-air">FAQ</a></b> for more information.</p>
+              </div>
+            </button>
+            <button @click="reboot">
+              <i>restart_alt</i>
+              <span>Reboot</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Reboot the device
+              </div>
+            </button>
+            <button @click="erase">
+              <i>delete</i>
+              <span>Factory reset</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Delete identity and all settings from the device
+              </div>
+            </button>
+          </div>
+        </fieldset>
+        <fieldset :disabled="app.locked">
+          <legend>Name & Location</legend>
+          <div class="field border label no-margin">
+            <input placeholder=" " :value="app.device.vars.name" @input="onNameInput">
+            <label>Name</label>
+            <div class="tooltip right max bottom" @click.stop>
+              Max length is 24 bytes with location set, 32 otherwise. Emoji and unicode may take more than one byte.
+            </div>
+          </div>
+          <nav class="right-align no-space no-margin">
+            <span class="byte-counter" :style="{ color: nameBytes >= nameMaxBytes ? 'var(--error)' : 'var(--on-surface-variant)' }">{{ nameBytes }} / {{ nameMaxBytes }} bytes</span>
+          </nav>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " type="text" pattern="-?[0-9]{1,2}([.][0-9]{1,6})?" v-model="app.device.vars.lat">
+              <label>Latitude</label>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " type="text" pattern="-?[0-9]{1,3}([.][0-9]{1,6})?" v-model="app.device.vars.lon">
+              <label>Longitude</label>
+            </div>
+            <button class="circle" @click="showMap">
+              <i>map</i>
+              <div class="tooltip right max bottom" @click.stop>
+                Set coordinates from map
+              </div>
+            </button>
+          </div>
+        </fieldset>
+
+        <fieldset :disabled="app.locked">
+          <legend>Access</legend>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['guest.password']">
+              <label>Guest password</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Sets/updates the guest password. Leaving this empty is recommended, as it gives users access to owner info and neighbors functionality.
+              </div>
+            </div>
+            <div class="field border label max">
+              <input type="password" placeholder=" " v-model="app.device.password">
+              <label>New Admin password</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Sets a new admin password. Default: "password". Any node using this password will be added to the admin ACL list.
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset :disabled="app.locked" v-if="app.device.role === 'room-server'">
+          <legend>Room server settings</legend>
+          <div class="actions">
+          <label class="checkbox">
+            <input type="checkbox" v-model="app.device.vars.repeat">
+            <span>Repeat</span>
+            <div class="tooltip right max bottom" @click.stop>
+              Enables or disables the repeater role for this node. Default: on
+            </div>
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" v-model="app.device.vars['allow.read.only']">
+            <span>Read only</span>
+            <div class="tooltip right max bottom" @click.stop>
+              Allow login with blank password in read-only mode (cannot post to room). Default: off
+            </div>
+          </label>
+          </div>
+        </fieldset>
+
+        <fieldset :disabled="app.locked">
+          <legend>Radio settings</legend>
+
+          <div class="field border label max">
+            <select @change="setRadioPreset($event.target.value)">
+              <option v-for="(preset, i) of app.presets" :selected="preset === app.preset" :value="i">{{ preset.title }}</option>
+            </select>
+            <label>Preset</label>
+            <div class="tooltip right max bottom" @click.stop>
+              <p>Suggested radio settings per region.</p>
+              <p>These radio settings have been suggested by the community.</p>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars.radio.freq" type="number" min="400" max="2500" step="0.001">
+              <label>Frequency(MHz)</label>
+            </div>
+
+            <div class="field border label max">
+              <select v-model="app.device.vars.radio.bw">
+                <option value="7.8">7.8</option>
+                <option value="10.4">10.4</option>
+                <option value="15.6">15.6</option>
+                <option value="20.8">20.8</option>
+                <option value="31.25">31.25</option>
+                <option value="41.7">41.7</option>
+                <option value="62.5">62.5</option>
+                <option value="125">125</option>
+                <option value="250">250</option>
+                <option value="500">500</option>
+              </select>
+              <label>Bandwidth(kHz)</label>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field border label max">
+              <select v-model="app.device.vars.radio.sf">
+                <option>7</option>
+                <option>8</option>
+                <option>9</option>
+                <option>10</option>
+                <option>11</option>
+                <option>12</option>
+              </select>
+              <label>Spreading factor</label>
+            </div>
+
+            <div class="field border label max">
+              <select v-model="app.device.vars.radio.cr">
+                <option>5</option>
+                <option>6</option>
+                <option>7</option>
+                <option>8</option>
+              </select>
+              <label>Coding rate</label>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars.tx" type="number" min="1" max="22" step="1">
+              <label>TX Power(dBm)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Power level of the LoRa chip (1-22 dBm). Some boards have an additional amplifier. Setting too high may violate local regulations.
+              </div>
+            </div>
+
+            <div class="field border label max">
+              <input placeholder=" " v-model="dutyCycle" type="number" min="1" max="50" step="1">
+              <label>Duty cycle (%)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                <p>After each transmission, the repeater enforces a silent period proportional to the on-air time. You are responsible for choosing a value appropriate for your jurisdiction (e.g. EU 868 MHz requires 10% duty cycle).</p>
+                <p>Airtime factor (AF): {{ app.device.vars.af }} &mdash; default: 1 (~50%)</p>
+              </div>
+            </div>
+          </div>
+        </fieldset>
+        <fieldset :disabled="app.locked">
+          <legend>Advertising</legend>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['advert.interval']" type="number" min="0" max="240" step="1">
+              <label>Advert interval (min)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Zero-hop advert interval in minutes, rounded to nearest multiple of 2 (60-240, or 0 to disable). Default: 0
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['flood.advert.interval']" type="number" min="0" max="168" step="1">
+              <label>Flood advert interval (hrs)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Flood advert interval in hours (3-168, or 0 to disable). Default: 12 (repeater), 0 (sensor)
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['flood.max']" type="number" min="0" max="64" step="1">
+              <label>Flood max</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Maximum flood hop count (0-64). Default: 64
+              </div>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset :disabled="app.locked" v-if="supportsVar('owner.info')">
+          <legend>Owner info</legend>
+          <div class="field textarea border label max no-margin">
+            <textarea placeholder=" " :value="app.device.vars['owner.info']" @input="onOwnerInfoInput" rows="4"></textarea>
+            <label>Owner info</label>
+          </div>
+          <nav class="right-align no-space no-margin">
+            <span class="byte-counter" :style="{ color: ownerInfoBytes >= 119 ? 'var(--error)' : 'var(--on-surface-variant)' }">{{ ownerInfoBytes }} / 119 bytes</span>
+          </nav>
+        </fieldset>
+
+        <label class="checkbox">
+          <input type="checkbox" v-model="app.showAdvanced">
+          <span>Show advanced settings</span>
+        </label>
+        <div class="small-space"></div>
+        <fieldset :disabled="app.locked" v-if="app.showAdvanced">
+          <legend>Advanced settings</legend>
+          <div class="row">
+            <div class="field border label max" v-if="supportsVar('loop.detect')">
+              <select v-model="app.device.vars['loop.detect']">
+                <option value="off">Off</option>
+                <option value="minimal">Minimal</option>
+                <option value="moderate">Moderate</option>
+                <option value="strict">Strict</option>
+              </select>
+              <label>Loop detection</label>
+              <div class="tooltip right max bottom" @click.stop>
+                <p>Rejects flood packets that appear to be in a loop. Default: off. Requires firmware 1.14+</p>
+                <p>Minimal: drops if own hash appears 4+ times (1-byte) or 2+ (2-byte). Moderate: 2+ (1-byte) or 1+ (2-byte). Strict: 1+ for all sizes.</p>
+              </div>
+            </div>
+            <div class="field border label max" v-if="supportsVar('path.hash.mode')">
+              <select v-model="app.device.vars['path.hash.mode']">
+                <option value="0">1-byte (0)</option>
+                <option value="1">2-byte (1)</option>
+                <option value="2">3-byte (2)</option>
+              </select>
+              <label>Path hash mode</label>
+              <div class="tooltip right max bottom" @click.stop>
+                <p>Sets the ID/hash encoding size used in adverts. Default: 0. Requires firmware 1.14+</p>
+                <p>0: 1-byte (256 IDs, max 64 flood). 1: 2-byte (65K IDs, max 32 flood). 2: 3-byte (16M IDs, max 21 flood).</p>
+                <p>Older firmware (&lt;1.14) will drop packets with multi-byte hashes.</p>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['int.thresh']" type="number" min="0" max="255" step="1">
+              <label>Interference threshold</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Local interference threshold. Default: 0
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['agc.reset.interval']" type="number" min="0" step="4">
+              <label>AGC reset interval</label>
+              <div class="tooltip right max bottom" @click.stop>
+                AGC reset interval in seconds, rounded down to a multiple of 4. Default: 0
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars.rxdelay" type="number" min="0" max="20" step="0.1">
+              <label>RX delay base</label>
+              <div class="tooltip right max bottom" @click.stop>
+                [Experimental] Processing delay for received traffic (0-20). Default: 0
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars.txdelay" type="number" min="0" max="2" step="0.1">
+              <label>TX delay factor</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Retransmit delay factor for flood traffic (0-2). Default: 0.5
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['direct.txdelay']" type="number" min="0" max="2" step="0.1">
+              <label>Direct TX delay</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Retransmit delay factor for direct traffic (0-2). Default: 0.2
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <label class="checkbox">
+              <input type="checkbox" v-model="app.device.vars['multi.acks']" true-value="1" false-value="0">
+              <span>Multi ACKs</span>
+              <div class="tooltip right max bottom" @click.stop>
+                Enable multi-acks support. Default: off
+              </div>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+      <div class="small-space"></div>
+      <div v-if="hasChanges" class="row" style="align-items: center; gap: 0.5em; color: var(--primary)">
+        <i>info</i>
+        <span>You have unsaved changes</span>
+      </div>
+      <div class="small-space" v-if="hasChanges"></div>
+      <button @click="setData">
+        <i>save</i>
+        <span>Save settings</span>
+      </button>
+    </main>
+  </div>
+  <script type="module" src="./lib/beer.min.js"></script>
+  <script type="module" src="./src/gui.js"></script>
+</body>
+
+</html>
