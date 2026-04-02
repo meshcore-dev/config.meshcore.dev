@@ -264,8 +264,13 @@ createApp({
         const response = await cli.getVariable(key);
         let value = cli.parseVariableResponse(response);
         if(value === null) {
-          console.warn(`Unsupported variable: ${key}, response: ${response}`);
-          continue;
+          // empty response like ">" with no value - treat as empty string for string vars
+          if(typeof vars[key] === 'string' && response && response.startsWith('>')) {
+            value = '';
+          } else {
+            console.warn(`Unsupported variable: ${key}, response: ${response}`);
+            continue;
+          }
         }
         if(key === 'radio') {
           const radioKeys = ['freq', 'bw', 'sf', 'cr'];

@@ -295,13 +295,6 @@
           <legend>Access</legend>
           <div class="row">
             <div class="field border label max">
-              <input placeholder=" " v-model="app.device.vars['guest.password']">
-              <label>Guest password</label>
-              <div class="tooltip right max bottom" @click.stop>
-                Sets/updates the guest password. Leaving this empty is recommended, as it gives users access to owner info and neighbors functionality.
-              </div>
-            </div>
-            <div class="field border label max">
               <input type="password" placeholder=" " v-model="app.device.password">
               <label>New Admin password</label>
               <div class="tooltip right max bottom" @click.stop>
@@ -309,7 +302,14 @@
               </div>
             </div>
           </div>
-        </fieldset>
+          <div class="field border label max">
+            <input placeholder=" " v-model="app.device.vars['guest.password']">
+            <label>Guest password</label>
+            <div class="tooltip right max bottom" @click.stop>
+              Sets/updates the guest password. Leaving this empty is recommended, as it gives users access to owner info and neighbors functionality.
+            </div>
+          </div>
+      </fieldset>
 
         <fieldset :disabled="app.locked" v-if="app.device.role === 'room-server'">
           <legend>Room server settings</legend>
