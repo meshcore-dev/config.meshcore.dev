@@ -1,4 +1,4 @@
-# config.meshcore.dev
+# config.meshcore.io
 
 Web-based configuration tool for MeshCore Repeater, Room Server and Sensor nodes via USB serial (Web Serial API).
 
