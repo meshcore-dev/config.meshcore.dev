@@ -55,6 +55,8 @@ createApp({
           'txdelay': 0,
           'direct.txdelay': 0,
           'flood.max': 0,
+          'flood.max.unscoped': 0,
+          'flood.max.advert': 0,
           'flood.advert.interval': 0,
           'advert.interval': 0,
           'guest.password': '',
@@ -67,7 +69,17 @@ createApp({
           'path.hash.mode': 0,
           'loop.detect': 'off',
         },
-        varsDevice: {}
+        varsDevice: {},
+        region: {
+          def: '',
+          home: '',
+          default: '',
+        },
+        regionDevice: {
+          home: '',
+          default: '',
+        },
+        regionTree: '',
       },
     });
 
@@ -303,8 +315,157 @@ createApp({
         vars[key] = value;
         varsDevice[key] = typeof value === 'object' ? { ...value } : value;
       }
+
+      await loadRegionInfo();
       app.busy = '';
     }
+
+    const fetchRegionTree = async () => {
+      try {
+        const tree = await cli.sendCommand('region');
+        app.device.regionTree = tree || '';
+      } catch (e) {
+        console.warn('Could not read region tree', e);
+      }
+      return app.device.regionTree;
+    };
+
+    const lastToken = (response) => {
+      if (typeof response !== 'string') return '';
+      const parts = response.trim().split(/\s+/);
+      return parts[parts.length - 1] || '';
+    };
+
+    const normalizeRegionValue = (value) => {
+      if (typeof value !== 'string') return '';
+      return /^<?null>?$/i.test(value.trim()) ? '' : value;
+    };
+
+    const loadRegionInfo = async () => {
+      await fetchRegionTree();
+      try {
+        const home = await cli.sendCommand('region home');
+        const value = lastToken(home);
+        if (app.device.region.home === app.device.regionDevice.home) {
+          app.device.region.home = value;
+        }
+        app.device.regionDevice.home = value;
+      } catch (e) {
+        console.warn('Could not read region home', e);
+      }
+      try {
+        const def = await cli.sendCommand('region default');
+        const value = normalizeRegionValue(lastToken(def));
+        if (app.device.region.default === app.device.regionDevice.default) {
+          app.device.region.default = value;
+        }
+        app.device.regionDevice.default = value;
+      } catch (e) {
+        console.warn('Could not read region default', e);
+      }
+    };
+
+    const setHomeAndDefaultRegion = async () => {
+        let regionChanged = false;
+        if (app.device.region.home !== app.device.regionDevice.home) {
+          const reply = await cli.sendCommand(`region home ${app.device.region.home}`);
+          if (String(reply).trim().startsWith('Err')) {
+            throw new Error(`region home: ${reply}`);
+          }
+          regionChanged = true;
+        }
+        if (app.device.region.default !== app.device.regionDevice.default) {
+          const reply = await cli.sendCommand(`region default ${app.device.region.default}`);
+          if (String(reply).trim().startsWith('Err')) {
+            throw new Error(`region default: ${reply}`);
+          }
+          regionChanged = true;
+        }
+        if (regionChanged) {
+          await cli.sendCommand('region save');
+        }
+    }
+
+    const applyRegionDefCommand = async () => {
+      const def = app.device.region.def && app.device.region.def.trim();
+      if (!def) return false;
+      const reply = await cli.sendCommand(`region def ${def}`);
+      if (String(reply).trim().startsWith('Err')) {
+        throw new Error(`region def: ${reply}`);
+      }
+      await cli.sendCommand('region save');
+      return true;
+    };
+
+    const applyRegionDef = async () => {
+      if (!app.device.region.def || !app.device.region.def.trim()) {
+        alert('Enter a region hierarchy first, e.g. "eu fr".');
+        return;
+      }
+      app.locked = true;
+      app.busy = 'Applying region definition...';
+      try {
+        await applyRegionDefCommand();
+		await setHomeAndDefaultRegion();
+        await loadRegionInfo();
+        showMessage('Region definition applied.', 'check_circle');
+      } catch (err) {
+        alert(`Cannot apply region definition: ${err.message}`);
+      } finally {
+        app.busy = '';
+        app.locked = false;
+      }
+    };
+
+    const parseRegionTreeEntries = (tree) => {
+      if (!tree) return [];
+      return tree.split('\n')
+        .map(line => {
+          if (!line.trim()) return null;
+          const leadingSpaces = line.match(/^(\s*)/)[1].length;
+          const name = line.trim().split(/\s+/)[0].replace(/\^$/, '');
+          return name ? { name, depth: leadingSpaces } : null;
+        })
+        .filter(Boolean);
+    };
+
+    const removeAllRegions = async () => {
+      if (!confirm(
+        'Remove ALL defined regions from this device?\n\n' +
+        'Regions are removed starting from the leaves of the tree. The wildcard region (*) is kept.\n' +
+        'Changes are persisted immediately with "region save".'
+      )) return;
+
+      app.locked = true;
+      app.busy = 'Removing regions...';
+      try {
+        const tree = await fetchRegionTree();
+        const entries = parseRegionTreeEntries(tree)
+          .filter(e => e.name !== '*')
+          .sort((a, b) => b.depth - a.depth); // leaves (deepest) first
+
+        for (const entry of entries) {
+          const reply = await cli.sendCommand(`region remove ${entry.name}`);
+          if (String(reply).trim().toLowerCase() !== 'ok') {
+            throw new Error(`Failed to remove "${entry.name}": ${reply}`);
+          }
+        }
+
+        await cli.sendCommand('region save');
+        await fetchRegionTree();
+		// invalidate home and default regions (without updating the ui)
+		// this way they'll be sent on next Save settings or Apply def
+		app.device.regionDevice.home = "*"
+		app.device.regionDevice.default = ""
+        showMessage('All regions removed.', 'delete_sweep');
+      } catch (err) {
+        alert(`Cannot remove all regions: ${err.message}`);
+        await fetchRegionTree();
+      } finally {
+        app.busy = '';
+        app.locked = false;
+      }
+    };
 
     const setData = async() => {
       const vars = app.device.vars;
@@ -353,6 +514,28 @@ createApp({
           await cli.sendCommand(`password ${app.device.password}`);
           app.device.password = '';
         }
+
+        await applyRegionDefCommand();
+
+        let regionChanged = false;
+        if (app.device.region.home !== app.device.regionDevice.home) {
+          const reply = await cli.sendCommand(`region home ${app.device.region.home}`);
+          if (String(reply).trim().startsWith('Err')) {
+            throw new Error(`region home: ${reply}`);
+          }
+          regionChanged = true;
+        }
+        if (app.device.region.default !== app.device.regionDevice.default) {
+          const reply = await cli.sendCommand(`region default ${app.device.region.default}`);
+          if (String(reply).trim().startsWith('Err')) {
+            throw new Error(`region default: ${reply}`);
+          }
+          regionChanged = true;
+        }
+        if (regionChanged) {
+          await cli.sendCommand('region save');
+        }
+
         await getData();
         if(needsReboot) {
           if(confirm('Settings saved. Some changes require a reboot to take effect.\n\nReboot now?')) {
@@ -508,6 +691,8 @@ createApp({
         if (!(key in varsDevice)) continue;
         if (JSON.stringify(vars[key]) !== JSON.stringify(varsDevice[key])) return true;
       }
+      if (app.device.region.home !== app.device.regionDevice.home) return true;
+      if (app.device.region.default !== app.device.regionDevice.default) return true;
       return !!app.device.password || !!app.device.importPrvKey;
     });
 
@@ -528,7 +713,14 @@ createApp({
       } catch (e) {
         console.warn('Could not read prv.key', e);
       }
-      const data = { vars: plainVars };
+      const data = {
+        vars: plainVars,
+        region: {
+          def: app.device.region.def || '',
+          home: app.device.region.home || '',
+          default: app.device.region.default || '',
+        },
+      };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -564,6 +756,11 @@ createApp({
           }
           if (data.vars['prv.key']) {
             app.device.importPrvKey = data.vars['prv.key'];
+          }
+          if (data.region && typeof data.region === 'object') {
+            if (typeof data.region.def === 'string') app.device.region.def = data.region.def;
+            if (typeof data.region.home === 'string') app.device.region.home = data.region.home;
+            if (typeof data.region.default === 'string') app.device.region.default = data.region.default;
           }
           showMessage('Configuration imported.', 'upload');
         } catch (err) {
@@ -648,7 +845,7 @@ createApp({
       'get acl', 'setperm',
       'powersaving', 'powersaving on', 'powersaving off',
       'get radio.rxgain', 'set radio.rxgain',
-      'region', 'region load', 'region save', 'region home',
+      'region', 'region load', 'region save', 'region home', 'region default', 'region def',
       'region allowf', 'region denyf', 'region get', 'region put', 'region remove', 'region list',
       'gps', 'gps on', 'gps off', 'gps sync', 'gps setloc', 'gps advert',
       'sensor list', 'sensor get', 'sensor set',
@@ -772,6 +969,7 @@ createApp({
       mapDialog, showMap, setMapLatLon, requestLocation,
       dutyCycle, ownerInfoBytes, onOwnerInfoInput,
       hasChanges, exportConfig, importConfig, copyPrvKey,
+      applyRegionDef, removeAllRegions,
       nameBytes, nameMaxBytes, onNameInput,
       vanityDialog, vanity,
       openVanityDialog, closeVanityDialog, startVanityGen, cancelVanityGen, applyVanityKey,

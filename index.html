@@ -426,11 +426,27 @@
                 Flood advert interval in hours (3-168, or 0 to disable). Default: 12 (repeater), 0 (sensor)
               </div>
             </div>
+          </div>
+          <div class="row">
             <div class="field border label max">
               <input placeholder=" " v-model="app.device.vars['flood.max']" type="number" min="0" max="64" step="1">
               <label>Flood max</label>
               <div class="tooltip right max bottom" @click.stop>
                 Maximum flood hop count (0-64). Default: 64
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['flood.max.unscoped']" type="number" min="0" max="64" step="1">
+              <label>Flood max (unscoped)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Maximum flood hop count (0-64) for packets without a region scope. Default: 64
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.vars['flood.max.advert']" type="number" min="0" max="64" step="1">
+              <label>Flood max (advert)</label>
+              <div class="tooltip right max bottom" @click.stop>
+                Maximum flood hop count (0-64) for advert packets. Default: 8
               </div>
             </div>
           </div>
@@ -530,6 +546,62 @@
               </div>
             </label>
           </div>
+        </fieldset>
+
+        <fieldset :disabled="app.locked" v-if="app.showAdvanced">
+          <legend>Regions</legend>
+
+          <div class="row">
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.region.home">
+              <label>Home region</label>
+              <div class="tooltip right max bottom" @click.stop>
+                The 'home' region for this node. Saved together with the rest of the settings via "Save settings" below.
+              </div>
+            </div>
+            <div class="field border label max">
+              <input placeholder=" " v-model="app.device.region.default">
+              <label>Default scope region</label>
+              <div class="tooltip right max bottom" @click.stop>
+                The default scope region used for packets originating from this node. Enter "null" to clear it. Saved together with the rest of the settings via "Save settings" below.
+              </div>
+            </div>
+          </div>
+
+          <div class="medium-space"></div>
+          <fieldset :disabled="app.locked">
+            <legend>Manage regions</legend>
+
+            <div class="field textarea border label max no-margin" v-if="app.device.regionTree">
+              <textarea placeholder=" " :value="app.device.regionTree" readonly rows="4"></textarea>
+              <label>Current region tree (device)</label>
+            </div>
+            <div class="small-space" v-if="app.device.regionTree"></div>
+
+            <div class="row">
+              <div class="field border label max">
+                <input placeholder=" " v-model="app.device.region.def">
+                <label>Region hierarchy (region def)</label>
+                <div class="tooltip right max bottom" @click.stop>
+                  <p>Space-separated tokens defining a region chain, e.g. "eu fr" creates region "eu" then "fr" as its child. Use "name|jump" to branch.</p>
+                  <p>Applied immediately when you click "Apply def" below (not part of "Save settings").</p>
+                </div>
+              </div>
+            </div>
+            <nav class="right-align">
+              <button class="transparent link" @click="removeAllRegions">
+                <i>delete_sweep</i>
+                <span>Remove all regions</span>
+                <div class="tooltip left max bottom" @click.stop>
+                  Removes all defined regions leaf-first (keeps the wildcard *) and saves immediately.
+                </div>
+              </button>
+              <button @click="applyRegionDef">
+                <i>account_tree</i>
+                <span>Apply def</span>
+              </button>
+            </nav>
+          </fieldset>
         </fieldset>
       </div>
       <div class="small-space"></div>
